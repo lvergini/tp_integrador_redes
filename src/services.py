@@ -4,7 +4,8 @@ from src.db import (
     upsert_user, get_user_by_login, get_user_id_by_login,
     upsert_repos, mark_last_sync_repos, select_repos_by_owner,
     upsert_user_followers, mark_last_sync_followers, select_followers_by_user,
-    select_all_users,mark_user_tracked,  
+    select_all_users,mark_user_tracked,
+    count_repos_for_user, count_followers_for_user,
 )
 
 
@@ -101,3 +102,54 @@ def list_stored_users(conn) -> list[dict]:
         list[dict]: filas con id, login, last_sync_repos y last_sync_followers.
     """
     return select_all_users(conn)
+
+def get_user_status(conn, login: str) -> dict:
+    """
+    Obtener un resumen del estado de un usuario en la base de datos.
+
+    El estado incluye:
+      - si el usuario existe o no,
+      - sus fechas de última sincronización de repos y followers,
+      - la cantidad de repositorios y followers almacenados.
+
+    Parámetros:
+        conn: conexión activa a MySQL.
+        login (str): nombre de usuario de GitHub.
+
+    Retorna:
+        dict: diccionario con las claves:
+            - 'exists' (bool)
+            - 'login' (str | None)
+            - 'name' (str | None)
+            - 'last_sync_repos' (datetime | None)
+            - 'last_sync_followers' (datetime | None)
+            - 'repos_count' (int)
+            - 'followers_count' (int)
+    """
+    row = get_user_by_login(conn, login)
+
+    # Usuario no existe en la base
+    if row is None:
+        return {
+            "exists": False,
+            "login": None,
+            "name": None,
+            "last_sync_repos": None,
+            "last_sync_followers": None,
+            "repos_count": 0,
+            "followers_count": 0,
+        }
+
+    user_id = row["id"]
+    repos_count = count_repos_for_user(conn, user_id)
+    followers_count = count_followers_for_user(conn, user_id)
+
+    return {
+        "exists": True,
+        "login": row["login"],
+        "name": row.get("name"),
+        "last_sync_repos": row.get("last_sync_repos"),
+        "last_sync_followers": row.get("last_sync_followers"),
+        "repos_count": repos_count,
+        "followers_count": followers_count,
+    }

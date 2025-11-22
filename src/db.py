@@ -424,3 +424,48 @@ def select_followers_by_user(conn, login: str) -> list[tuple]:
     finally:
         cur.close()
 
+def count_repos_for_user(conn, owner_id: int) -> int:
+    """
+    Contar la cantidad de repositorios almacenados para un usuario dado.
+
+    Parámetros:
+        conn: conexión activa a MySQL.
+        owner_id (int): identificador del usuario (FK en 'repositorios.owner_id').
+
+    Retorna:
+        int: cantidad de repositorios asociados al usuario.
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT COUNT(*) FROM repositorios WHERE owner_id = %(owner_id)s",
+            {"owner_id": owner_id},
+        )
+        row = cur.fetchone()
+        return int(row[0]) if row else 0
+    finally:
+        cur.close()
+
+
+def count_followers_for_user(conn, followed_id: int) -> int:
+    """
+    Contar la cantidad de followers almacenados para un usuario dado.
+
+    Parámetros:
+        conn: conexión activa a MySQL.
+        followed_id (int): identificador del usuario seguido
+                           (FK en 'followers.followed_id').
+
+    Retorna:
+        int: cantidad de followers asociados al usuario.
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT COUNT(*) FROM followers WHERE followed_id = %(followed_id)s",
+            {"followed_id": followed_id},
+        )
+        row = cur.fetchone()
+        return int(row[0]) if row else 0
+    finally:
+        cur.close()
