@@ -83,7 +83,7 @@ def main() -> None:
                 break
 
             # 3) Loop de comandos
-            print("Escribí un comando (por ejemplo: /repos, /repos_local, adios).")
+            #print("Escribí un comando (por ejemplo: /repos, /repos_local, adios).")
 
             while True:
                 comando = input("> ").strip()

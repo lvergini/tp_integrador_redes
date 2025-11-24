@@ -59,6 +59,46 @@ PORT: int = 5000
 active_clients: int = 0
 active_clients_lock = threading.Lock()
 
+def build_commands_help() -> str:
+    """
+    Devolver el texto con la lista de comandos disponibles.
+    """
+    return (
+        "Comandos disponibles:\n"
+        "  /repos           -> sincronizar repos desde GitHub y ver los guardados\n"
+        "  /followers       -> sincronizar followers desde GitHub y ver los guardados\n"
+        "  /repos_local     -> ver repos guardados en la base\n"
+        "  /followers_local -> ver followers guardados en la base\n"
+        "  /help            -> mostrar esta ayuda\n"
+        "  adios            -> cerrar la conexión\n"
+    )
+
+
+def build_prompt() -> str:
+    """
+    Mensaje estándar que se agrega al final de cada respuesta.
+    """
+    return (
+        "\nIngrese un nuevo comando. "
+        "Escriba /help para ver la lista de comandos.\n"
+    )
+
+
+def ensure_db_connection(db_conn):
+    """
+    Asegurar que la conexión MySQL siga viva.
+    Si no está conectada o da error, devuelve una nueva conexión.
+    """
+    try:
+        if db_conn is not None and db_conn.is_connected():
+            return db_conn
+    except Exception:
+        pass
+
+    # Si se llega hasta acá, hay que crear una conexión nueva
+    return get_conn()
+
+
 def fmt_last_sync(dt: datetime | str | None) -> str:
     """
     Formatear una fecha/hora de última sincronización para mostrar al cliente.
@@ -108,16 +148,80 @@ def build_initial_status_message(status: dict) -> str:
         f"Followers guardados: {followers_count} (última sync: {lsf})\n"
     )
 
-    commands = (
-        "\nComandos disponibles:\n"
-        "  /repos           -> sincronizar repos desde GitHub y guardar en la base\n"
-        "  /followers       -> sincronizar followers desde GitHub y guardar en la base\n"
-        "  /repos_local     -> ver repos guardados en la base\n"
-        "  /followers_local -> ver followers guardados en la base\n"
-        "  adios            -> cerrar la conexión\n"
-    )
+    commands = "\n" + build_commands_help()
 
     return line_header + resumen + commands
+
+
+def build_repos_output(
+    login: str,
+    last_sync_str: str,
+    rows,
+    synced_count: int | None = None,
+) -> str:
+    """
+    Construir el texto para mostrar repos guardados (y opcionalmente cuántos se sincronizaron).
+    """
+    header_lines = [
+        f"[Repos guardados para {login}]",
+        f"Última sincronización de repos: {last_sync_str}",
+    ]
+    if synced_count is not None:
+        header_lines.append(
+            f"Repos sincronizados desde GitHub en esta operación: {synced_count}"
+        )
+
+    header = "\n".join(header_lines) + "\n\n"
+
+    if not rows:
+        body = "No hay repositorios guardados en la base.\n"
+    else:
+        body_lines: list[str] = [
+            "Nombre                            | Lenguaje     | ★ Stars",
+            "-" * 60,
+        ]
+        for name, lang, stars in rows:
+            line = f"{name:<32} | {str(lang or '-'): <12} | {stars}"
+            body_lines.append(line)
+        body = "\n".join(body_lines) + "\n"
+
+    return header + body
+
+
+def build_followers_output(
+    login: str,
+    last_sync_str: str,
+    rows,
+    synced_count: int | None = None,
+) -> str:
+    """
+    Construir el texto para mostrar followers guardados (y opcionalmente cuántos se sincronizaron).
+    """
+    header_lines = [
+        f"[Followers guardados para {login}]",
+        f"Última sincronización de followers: {last_sync_str}",
+    ]
+    if synced_count is not None:
+        header_lines.append(
+            f"Followers sincronizados desde GitHub en esta operación: {synced_count}"
+        )
+
+    header = "\n".join(header_lines) + "\n\n"
+
+    if not rows:
+        body = "No hay followers guardados en la base.\n"
+    else:
+        body_lines: list[str] = [
+            "Login                           | URL",
+            "-" * 72,
+        ]
+        for follower_login, url in rows:
+            line = f"{follower_login:<30} | {url or '-'}"
+            body_lines.append(line)
+        body = "\n".join(body_lines) + "\n"
+
+    return header + body
+
 
 
 def handle_client(client_sock: socket.socket, client_addr: tuple[str, int]) -> None:
@@ -184,8 +288,9 @@ def handle_client(client_sock: socket.socket, client_addr: tuple[str, int]) -> N
             break
 
         # 4) Enviar mensaje de estado inicial al cliente (ya con login válido)
-        initial_msg = build_initial_status_message(status)
+        initial_msg = build_initial_status_message(status) + "\n" + build_prompt()
         client_sock.sendall(initial_msg.encode("utf-8"))
+
 
         # 5) Bucle de comandos
         while True:
@@ -197,99 +302,62 @@ def handle_client(client_sock: socket.socket, client_addr: tuple[str, int]) -> N
             cmd = data.decode("utf-8").strip()
             print(f"[{client_addr}] Comando recibido: {cmd!r}")
 
-            # Sincronizar repos desde GitHub
+            # Sincronizar repos desde GitHub y mostrarlos
             if cmd == "/repos":
                 try:
-                    # Asegurar que la conexión MySQL sigue viva
-                    try:
-                        if not db_conn.is_connected():
-                            db_conn.reconnect(attempts=3, delay=2)
-                    except Exception:
-                        # Si reconectar falla, crear una nueva conexión limpia
-                        db_conn = get_conn()
-                    n = sync_repos(db_conn, login)
+                    db_conn = ensure_db_connection(db_conn)
+                    synced = sync_repos(db_conn, login)
                     status = get_user_status(db_conn, login)
                     lsr = fmt_last_sync(status.get("last_sync_repos"))
-                    msg = (
-                        f"Repos sincronizados desde GitHub: {n}\n"
-                        f"Última sincronización de repos: {lsr}\n"
-                    )
+                    rows = show_repos(db_conn, login)
+
+                    msg = build_repos_output(login, lsr, rows, synced)
                 except Exception as e:
                     msg = f"Error al sincronizar repos para {login}: {e}\n"
 
+                msg += build_prompt()
                 client_sock.sendall(msg.encode("utf-8"))
 
-            # Sincronizar followers desde GitHub
+            # Sincronizar followers desde GitHub y mostrarlos
             elif cmd == "/followers":
                 try:
-                    # Asegurar que la conexión MySQL sigue viva
-                    try:
-                        if not db_conn.is_connected():
-                            db_conn.reconnect(attempts=3, delay=2)
-                    except Exception:
-                        # Si reconectar falla, crear una nueva conexión limpia
-                        db_conn = get_conn()
-                    n = sync_followers(db_conn, login)
+                    db_conn = ensure_db_connection(db_conn)
+                    synced = sync_followers(db_conn, login)
                     status = get_user_status(db_conn, login)
                     lsf = fmt_last_sync(status.get("last_sync_followers"))
-                    msg = (
-                        f"Followers sincronizados desde GitHub: {n}\n"
-                        f"Última sincronización de followers: {lsf}\n"
-                    )
+                    rows = show_followers(db_conn, login)
+
+                    msg = build_followers_output(login, lsf, rows, synced)
                 except Exception as e:
                     msg = f"Error al sincronizar followers para {login}: {e}\n"
 
+                msg += build_prompt()
                 client_sock.sendall(msg.encode("utf-8"))
 
             # Ver repos guardados en la base
             elif cmd == "/repos_local":
-                status = get_user_status(db_conn, login)
+                #status = get_user_status(db_conn, login)
                 lsr = fmt_last_sync(status.get("last_sync_repos"))
                 rows = show_repos(db_conn, login)
 
-                header = (
-                    f"[Repos guardados para {login}]\n"
-                    f"Última sincronización de repos: {lsr}\n\n"
-                )
-
-                if not rows:
-                    body = "No hay repositorios guardados en la base.\n"
-                else:
-                    body_lines: list[str] = [
-                        "Nombre                            | Lenguaje     | ★ Stars",
-                        "-" * 60,
-                    ]
-                    for name, lang, stars in rows:
-                        line = f"{name:<32} | {str(lang or '-'): <12} | {stars}"
-                        body_lines.append(line)
-                    body = "\n".join(body_lines) + "\n"
-
-                client_sock.sendall((header + body).encode("utf-8"))
+                msg = build_repos_output(login, lsr, rows)
+                msg += build_prompt()
+                client_sock.sendall(msg.encode("utf-8"))
 
             # Ver followers guardados en la base
             elif cmd == "/followers_local":
-                status = get_user_status(db_conn, login)
+                #status = get_user_status(db_conn, login)
                 lsf = fmt_last_sync(status.get("last_sync_followers"))
                 rows = show_followers(db_conn, login)
 
-                header = (
-                    f"[Followers guardados para {login}]\n"
-                    f"Última sincronización de followers: {lsf}\n\n"
-                )
+                msg = build_followers_output(login, lsf, rows)
+                msg += build_prompt()
+                client_sock.sendall(msg.encode("utf-8"))
 
-                if not rows:
-                    body = "No hay followers guardados en la base.\n"
-                else:
-                    body_lines: list[str] = [
-                        "Login                           | URL",
-                        "-" * 72,
-                    ]
-                    for follower_login, url in rows:
-                        line = f"{follower_login:<30} | {url or '-'}"
-                        body_lines.append(line)
-                    body = "\n".join(body_lines) + "\n"
-
-                client_sock.sendall((header + body).encode("utf-8"))
+            # Mostrar ayuda
+            elif cmd in ("/help", "help"):
+                msg = build_commands_help() + "\n" + build_prompt()
+                client_sock.sendall(msg.encode("utf-8"))
 
             # Cerrar conexión
             elif cmd == "adios":
@@ -301,9 +369,11 @@ def handle_client(client_sock: socket.socket, client_addr: tuple[str, int]) -> N
             else:
                 msg = (
                     "Comando no reconocido.\n"
-                    "Usá /repos, /followers, /repos_local, /followers_local o adios.\n"
+                    "Usá /help para ver la lista de comandos.\n"
                 )
+                msg += build_prompt()
                 client_sock.sendall(msg.encode("utf-8"))
+
 
     except Exception as e:
         print(f"[!] Error manejando cliente {client_addr}: {e}")
@@ -355,12 +425,20 @@ def main() -> None:
         server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server_sock.bind((HOST, PORT))
         server_sock.listen()
+        # poner timeout corto: hace que accept() espere como máximo 1 segundo.
+        # Si no entra ningún cliente, lanza socket.timeout; se la captura y se hace continue.
+        # Eso deja al intérprete revisar señales, como Ctrl+C.
+        server_sock.settimeout(1.0)  # 1 segundo
         print(f"Servidor escuchando en {HOST}:{PORT}...")
 
         try:
             while True:
                 try:
                     client_sock, client_addr = server_sock.accept()
+                except socket.timeout:
+                    # No llegó ningún cliente en 1 segundo, se vuelve al while.
+                    # Esto permite que Ctrl+C se procese entre timeouts.
+                    continue
                 except KeyboardInterrupt:
                     print("\nServidor interrumpido por el usuario. Cerrando...")
                     break
@@ -372,6 +450,9 @@ def main() -> None:
                 )
                 thread.start()
 
+        except KeyboardInterrupt:
+            # Por si la interrupción cae fuera del accept
+            print("\nServidor interrumpido por el usuario. Cerrando...")
         except Exception as e:
             print(f"[FATAL] Error en el loop principal del servidor: {e}")
 
