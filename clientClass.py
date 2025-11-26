@@ -16,12 +16,16 @@ Flujo básico:
    - adios            -> cerrar la conexión
 
 5) El cliente muestra la respuesta del servidor para cada comando.
+   Cada respuesta del servidor viene delimitada por el marcador
+   especial END_MARKER, que el cliente usa para saber dónde termina.
 """
 
 import socket
 
 HOST: str = "127.0.0.1"  # IP del servidor (localhost por defecto)
 PORT: int = 5000         # Puerto del servidor (debe coincidir con server.py)
+
+END_MARKER: str = "\n<<END_OF_MESSAGE>>\n"
 
 
 class GitHubClient:
@@ -47,6 +51,7 @@ class GitHubClient:
         """
         self.host = host
         self.port = port
+        self._recv_buffer: str = ""
 
     # ------------------------------------------------------------------
     # Helpers internos
@@ -77,23 +82,40 @@ class GitHubClient:
         """
         sock.sendall(text.encode("utf-8"))
 
-    def _recv_text(self, sock: socket.socket, bufsize: int = 8192) -> str | None:
+    def _recv_until_marker(
+        self,
+        sock: socket.socket,
+        marker: str = END_MARKER,
+        bufsize: int = 4096,
+    ) -> str | None:
         """
-        Recibir datos del servidor y decodificarlos como UTF-8.
-
-        Parámetros:
-            sock: socket ya conectado al servidor.
-            bufsize (int): tamaño máximo del buffer de recepción.
+        Este método asume que el servidor siempre termina cada mensaje
+        lógico con END_MARKER.
 
         Retorna:
-            str | None: texto recibido tal como llega (incluyendo saltos de línea),
-                        o None si el servidor cerró la conexión.
+            str: texto recibido sin el marcador final.
+            None: si el servidor cerró la conexión sin enviar nada.
         """
-        data = sock.recv(bufsize)
-        if not data:
-            return None
-        return data.decode("utf-8")
+        while True:
+            # ¿Ya está el marcador dentro del buffer?
+            if marker in self._recv_buffer:
+                texto, _, rest = self._recv_buffer.partition(marker)
+                self._recv_buffer = rest
+                return texto
 
+            # Leer más datos del socket
+            chunk = sock.recv(bufsize)
+            if not chunk:
+                # El servidor cerró la conexión
+                if self._recv_buffer:
+                    texto = self._recv_buffer
+                    self._recv_buffer = ""
+                    return texto
+                return None
+
+            # Acumular en el buffer
+            self._recv_buffer += chunk.decode("utf-8", errors="replace")
+            
     # ------------------------------------------------------------------
     # Fase de login
     # ------------------------------------------------------------------
@@ -132,8 +154,9 @@ class GitHubClient:
             # Enviar login al servidor
             self._send_text(sock, login + "\n")
 
-            # Esperar respuesta inicial
-            texto = self._recv_text(sock)
+            # Esperar respuesta (ERROR_LOGIN o estado inicial),
+            # que  viene delimitada por END_MARKER
+            texto = self._recv_until_marker(sock)
             if texto is None:
                 print("El servidor cerró la conexión sin enviar mensaje inicial.")
                 return False
@@ -173,7 +196,7 @@ class GitHubClient:
 
             self._send_text(sock, comando + "\n")
 
-            respuesta = self._recv_text(sock)
+            respuesta = self._recv_until_marker(sock)
             if respuesta is None:
                 print("El servidor cerró la conexión.")
                 break

@@ -23,6 +23,8 @@ Protocolo (texto plano, UTF-8):
 
    Si el cliente envía 'adios' durante esta fase de login, el servidor responde
    con 'adios' y cierra la conexión.
+   El mensaje de estado inicial se envía como un bloque de texto terminado con 
+   un marcador especial: <<END_OF_MESSAGE>> (ver constante END_MARKER).
 
 3) Luego el cliente puede enviar comandos:
 
@@ -55,21 +57,29 @@ Protocolo (texto plano, UTF-8):
        Muestra la lista de comandos disponibles con una breve descripción.
 
    - "adios"
-       El servidor responde con "adios" y cierra la conexión con el cliente.
+       El servidor responde con "adios" (sin marcador de fin de mensaje) y 
+       cierra la conexión con el cliente.
 
-   Después de cada comando (salvo cuando se cierra la conexión), el servidor
-   agrega un mensaje de prompt:
-
-       "Ingrese un nuevo comando. Escriba /help para ver la lista de comandos."
+    Después de cada comando (salvo cuando se cierra la conexión), el servidor
+    arma una respuesta de texto (contenido + prompt) y la envía como un bloque
+    terminado con el marcador <<END_OF_MESSAGE>>.
 
 4) Cualquier otro comando recibe como respuesta:
    "Comando no reconocido.\nUsá /help para ver la lista de comandos.\n"
    seguido del prompt estándar.
+
+5)  Framing de mensajes
+    Todas las respuestas “largas” del servidor (errores de login, 
+    estado inicial y respuestas a comandos) se envían como texto 
+    UTF-8 terminado en el marcador <<END_OF_MESSAGE>>.
+    El cliente lee desde el socket hasta encontrar ese marcador y
+    recién ahí considera que la respuesta está completa.
 """
-from mysql.connector import MySQLConnection
 import socket
 import threading
 from datetime import datetime
+
+from mysql.connector import MySQLConnection
 
 from src.db import get_conn, init_db
 from src.services import (
@@ -85,6 +95,7 @@ from src.services import (
 HOST: str = "0.0.0.0"
 PORT: int = 5000
 
+END_MARKER: str = "\n<<END_OF_MESSAGE>>\n"
 
 class GitHubServer:
     """
@@ -223,6 +234,38 @@ class ClientSession:
     # Métodos auxiliares internos (helpers)
     # -----------------------------------------------------------
 
+    def _recv_line(self) -> str | None:
+        """
+        Leer una línea terminada en '\n' desde el socket.
+
+        Usa un buffer interno por sesión para acumular datos hasta
+        encontrar un salto de línea.
+
+        Devuelve:
+            str: línea sin el '\n' final.
+            None: si el cliente cerró la conexión antes de completar una línea.
+        """
+        while True:
+            # Si ya existe al menos una línea en el buffer
+            if "\n" in self._recv_buffer:
+                line, _, rest = self._recv_buffer.partition("\n")
+                self._recv_buffer = rest
+                return line  # ya es str
+
+            # Si se necesitan leer más datos del socket
+            chunk = self.client_sock.recv(4096)
+            if not chunk:
+                # El cliente cerró la conexión
+                if self._recv_buffer:
+                    # Devolver lo que quede, aunque no tenga '\n'
+                    line = self._recv_buffer
+                    self._recv_buffer = ""
+                    return line
+                return None
+
+            # Se decodifica una sola vez acá
+            self._recv_buffer += chunk.decode("utf-8", errors="replace")
+            
     def _send_text(self, text: str) -> None:
         """
         Enviar texto al cliente codificado en UTF-8 usando sendall.
@@ -230,6 +273,16 @@ class ClientSession:
         Garantiza que todo el contenido se envíe o se lance una excepción.
         """
         self.client_sock.sendall(text.encode("utf-8"))
+
+    def _send_block(self, text: str) -> None:
+        """
+        Enviar un bloque lógico de respuesta al cliente, agregando
+        un marcador de fin de mensaje para que el cliente sepa
+        cuándo terminó la respuesta.
+
+        El marcador global es END_MARKER.
+        """
+        self._send_text(text + END_MARKER)
 
     def _ensure_db_connection(self) -> None:
         """
@@ -426,38 +479,6 @@ class ClientSession:
 
         return header + body
 
-    def _recv_line(self) -> str | None:
-        """
-        Leer una línea terminada en '\n' desde el socket.
-
-        Usa un buffer interno por sesión para acumular datos hasta
-        encontrar un salto de línea.
-
-        Devuelve:
-            str: línea sin el '\n' final.
-            None: si el cliente cerró la conexión antes de completar una línea.
-        """
-        while True:
-            # Si ya existe al menos una línea en el buffer
-            if "\n" in self._recv_buffer:
-                line, _, rest = self._recv_buffer.partition("\n")
-                self._recv_buffer = rest
-                return line  # ya es str
-
-            # Si se necesitan leer más datos del socket
-            chunk = self.client_sock.recv(4096)
-            if not chunk:
-                # El cliente cerró la conexión
-                if self._recv_buffer:
-                    # Devolver lo que quede, aunque no tenga '\n'
-                    line = self._recv_buffer
-                    self._recv_buffer = ""
-                    return line
-                return None
-
-            # Se decodifica una sola vez acá
-            self._recv_buffer += chunk.decode("utf-8", errors="replace")
-            
     def _run_sync_command(
         self,
         *,
@@ -489,7 +510,7 @@ class ClientSession:
             msg = f"Error al sincronizar {kind} para {self.login}: {e}\n"
 
         msg += self._build_prompt()
-        self._send_text(msg)
+        self._send_block(msg)
 
     def _run_local_command(
         self,
@@ -517,7 +538,7 @@ class ClientSession:
 
         msg = output_builder(self.login, last_sync_str, rows)
         msg += self._build_prompt()
-        self._send_text(msg)
+        self._send_block(msg)
 
     # -----------------------------------------------------------
     # Fase de login
@@ -538,6 +559,7 @@ class ClientSession:
             True  si se obtuvo un login válido y se inicializó self.status.
             False si el cliente pidió 'adios' durante el login.
         """
+        self._ensure_db_connection()
         while True:
             raw_login = self._recv_line()
             if raw_login is None:
@@ -552,7 +574,7 @@ class ClientSession:
 
             # El cliente puede salir antes de loguearse
             if login.lower() == "adios":
-                self._send_text("adios\n")
+                self._send_text("adios\n") # Dejo con _send_text y no _send_block, porque acá se cierra la conexión
                 print(f"[+] {self.client_addr}: conexión cerrada por 'adios' durante login.")
                 return False
 
@@ -572,7 +594,7 @@ class ClientSession:
                         "Probá con otro nombre de usuario.\n"
                     )
                     print(f"[!] {self.client_addr} {error_msg.strip()}")
-                    self._send_text(error_msg)
+                    self._send_block(error_msg)
                     # Vuelve al inicio del while para recibir OTRO login
                     continue
 
@@ -641,6 +663,10 @@ class ClientSession:
         Comando /help (o help):
         Muestra la lista de comandos disponibles.
         """
+        if self.status is None:
+            self._ensure_db_connection()
+            self.status = get_user_status(self.db_conn, self.login)
+
         lsr = self._fmt_last_sync(self.status.get("last_sync_repos"))
         lsf = self._fmt_last_sync(self.status.get("last_sync_followers"))
 
@@ -649,7 +675,7 @@ class ClientSession:
             last_sync_repos=lsr,
             last_sync_followers=lsf
         ) + "\n" + self._build_prompt()
-        self._send_text(msg)
+        self._send_block(msg)
 
     # -----------------------------------------------------------
     # Ciclo de vida completo de la sesión
@@ -689,7 +715,7 @@ class ClientSession:
                 + "\n"
                 + self._build_prompt()
             )
-            self._send_text(initial_msg)
+            self._send_block(initial_msg)
 
             # Bucle de comandos
             while True:
@@ -712,7 +738,7 @@ class ClientSession:
                 elif cmd in ("/help", "help"):
                     self._cmd_help()
                 elif cmd == "adios":
-                    self._send_text("adios")
+                    self._send_text("adios") # Queda sin marcador (no se usa _send_block), para que el cliente sepa que después de adios viene cierre de conexión, no otra respuesta larga
                     print(f"[+] {self.client_addr}: conexión finalizada por comando 'adios'.")
                     break
                 else:
@@ -721,7 +747,7 @@ class ClientSession:
                         "Usá /help para ver la lista de comandos.\n"
                     )
                     msg += self._build_prompt()
-                    self._send_text(msg)
+                    self._send_block(msg)
 
         except Exception as e:
             print(f"[!] Error manejando cliente {self.client_addr}: {e}")
@@ -745,8 +771,6 @@ class ClientSession:
             with self.server.active_clients_lock:
                 self.server.active_clients -= 1
                 print(f"[INFO] Clientes activos: {self.server.active_clients}")
-
-
 
 
 def main() -> None:
