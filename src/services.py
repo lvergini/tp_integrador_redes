@@ -4,7 +4,7 @@ from src.db import (
     upsert_user, get_user_by_login, get_user_id_by_login,
     upsert_repos, mark_last_sync_repos, select_repos_by_owner,
     upsert_user_followers, mark_last_sync_followers, select_followers_by_user,
-    select_all_users,mark_user_tracked,
+    mark_user_tracked,
     count_repos_for_user, count_followers_for_user,
 )
 
@@ -16,19 +16,7 @@ def set_current_user(conn, login: str) -> dict:
     mark_user_tracked(conn, u["id"])
     return get_user_by_login(conn, u["login"])
 
-def refresh_current_user_row(conn, login: str) -> dict | None:
-    """
-    Recargar desde la base la fila del usuario actual.
-    Útil tras una sincronización para reflejar las fechas last_sync actualizadas.
 
-    Parámetros:
-        conn: conexión activa a MySQL.
-        login (str): nombre de usuario de GitHub.
-
-    Retorna:
-        dict | None: fila completa actualizada del usuario en DB, o None si no existe.
-    """
-    return get_user_by_login(conn, login)
 
 def sync_repos(conn, login: str) -> int:
     """
@@ -91,17 +79,7 @@ def show_followers(conn, login: str) -> list[tuple[str, str | None]]:
     return select_followers_by_user(conn, login)
 
 
-def list_stored_users(conn) -> list[dict]:
-    """
-    Devolver todos los usuarios almacenados en la base de datos.
 
-    Parámetros:
-        conn: conexión activa a MySQL.
-
-    Retorna:
-        list[dict]: filas con id, login, last_sync_repos y last_sync_followers.
-    """
-    return select_all_users(conn)
 
 def get_user_status(conn, login: str) -> dict:
     """
@@ -153,3 +131,28 @@ def get_user_status(conn, login: str) -> dict:
         "repos_count": repos_count,
         "followers_count": followers_count,
     }
+
+
+
+"""
+def refresh_current_user_row(conn, login: str) -> dict | None:
+    
+    Recargar desde la base la fila del usuario actual.
+    Útil tras una sincronización para reflejar las fechas last_sync actualizadas.
+
+    Parámetros:
+        conn: conexión activa a MySQL.
+        login (str): nombre de usuario de GitHub.
+
+    Retorna:
+        dict | None: fila completa actualizada del usuario en DB, o None si no existe.
+    
+    return get_user_by_login(conn, login)
+
+"""
+
+"""
+def list_stored_users(conn) -> list[dict]:
+
+    return select_all_users(conn)
+"""

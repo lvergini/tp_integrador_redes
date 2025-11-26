@@ -201,31 +201,6 @@ def get_user_id_by_login(conn, login: str) -> int:
 
     return int(row[0])
 
-def select_all_users(conn) -> list[dict]:
-    """
-    Devolver todos los usuarios almacenados en la base de datos.
-
-    Parámetros:
-        conn: conexión activa a MySQL.
-
-    Retorna:
-        list[dict]: filas con id, login, last_sync_repos y last_sync_followers.
-    """
-    cursor = conn.cursor(dictionary=True)
-    try:
-        cursor.execute(
-            """
-            SELECT id, login, last_sync_repos, last_sync_followers
-            FROM users
-            WHERE is_tracked = 1
-            ORDER BY login ASC;
-            """
-        )
-        rows = cursor.fetchall()
-        return rows
-    finally:
-        cursor.close()
-
 
 def upsert_repos(conn, owner_id: int, repos: list[dict]) -> int:
     """
@@ -469,3 +444,34 @@ def count_followers_for_user(conn, followed_id: int) -> int:
         return int(row[0]) if row else 0
     finally:
         cur.close()
+
+
+"""
+
+def select_all_users(conn) -> list[dict]:
+    
+    Devolver todos los usuarios almacenados en la base de datos.
+
+    Parámetros:
+        conn: conexión activa a MySQL.
+
+    Retorna:
+        list[dict]: filas con id, login, last_sync_repos y last_sync_followers.
+    
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute(
+           
+            SELECT id, login, last_sync_repos, last_sync_followers
+            FROM users
+            WHERE is_tracked = 1
+            ORDER BY login ASC;
+            
+        )
+        rows = cursor.fetchall()
+        return rows
+    finally:
+        cursor.close()
+
+
+"""
