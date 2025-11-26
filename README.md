@@ -37,9 +37,9 @@ tp_integrador_redes/
 ├── requirements.txt
 │
 └── src/
-├── db.py # conexión MySQL + inicialización de tablas
-├── services.py # lógica de lectura/escritura y sincronización
-└── github_api.py # llamadas a la API de GitHub + paginación
+    ├── db.py # conexión MySQL + inicialización de tablas
+    ├── services.py # lógica de lectura/escritura y sincronización
+    └── github_api.py # llamadas a la API de GitHub + paginación
 ```
 
 ---
@@ -65,12 +65,14 @@ cp .env.example .env
 
 2. Completar las variables necesarias:
 
+```pwsh
 GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxx    # opcional pero recomendado
 DB_HOST=localhost
 DB_PORT=3306
 DB_USER=tu_usuario
 MYSQL_PASSWORD=tu_password
 MYSQL_DB=githubdb
+```
 
 ## Base de datos
 El servidor inicializa automáticamente las tablas necesarias al arrancar.
@@ -131,7 +133,7 @@ Esto permite que el cliente lea correctamente mensajes largos (tablas, listados,
 - /repos_local	    Muestra repos guardados en base, sin llamar a la API
 - /followers_local	Muestra followers guardados en base
 - /help	            Lista de comandos
-- /adios	            Cierra la sesión
+- /adios	        Cierra la sesión
 
 ## Instalación rápida
 
