@@ -21,8 +21,8 @@ Protocolo (texto plano, UTF-8):
 
    y mantiene la conexión abierta para que el cliente pueda enviar otro login.
 
-   Si el cliente envía 'adios' durante esta fase de login, el servidor responde
-   con 'adios' y cierra la conexión.
+   Si el cliente envía '/adios' durante esta fase de login, el servidor responde
+   con '/adios' y cierra la conexión.
    El mensaje de estado inicial se envía como un bloque de texto terminado con 
    un marcador especial: <<END_OF_MESSAGE>> (ver constante END_MARKER).
 
@@ -56,8 +56,8 @@ Protocolo (texto plano, UTF-8):
    - "/help" o "help"
        Muestra la lista de comandos disponibles con una breve descripción.
 
-   - "adios"
-       El servidor responde con "adios" (sin marcador de fin de mensaje) y 
+   - "/adios"
+       El servidor responde con "/adios" (sin marcador de fin de mensaje) y 
        cierra la conexión con el cliente.
 
     Después de cada comando (salvo cuando se cierra la conexión), el servidor
@@ -358,7 +358,7 @@ class ClientSession:
             f"{repos_local}\n"
             f"{followers_local}\n"
             "  /help            -> mostrar esta ayuda\n"
-            "  adios            -> cerrar la conexión\n"
+            "  /adios            -> cerrar la conexión\n"
         )
 
     def _build_prompt(self) -> str:
@@ -549,7 +549,7 @@ class ClientSession:
         Manejar la fase de login del cliente.
 
         - Recibe el login de GitHub.
-        - Si recibe 'adios', responde 'adios' y termina la sesión.
+        - Si recibe '/adios', responde '/adios' y termina la sesión.
         - Valida/crea el usuario en la base con ayuda de services.
         - En caso de error (por ejemplo, usuario inexistente en GitHub),
           envía un mensaje que comienza con 'ERROR_LOGIN ...' y permite
@@ -557,7 +557,7 @@ class ClientSession:
 
         Devuelve:
             True  si se obtuvo un login válido y se inicializó self.status.
-            False si el cliente pidió 'adios' durante el login.
+            False si el cliente pidió '/adios' durante el login.
         """
         self._ensure_db_connection()
         while True:
@@ -573,9 +573,9 @@ class ClientSession:
             print(f"[{self.client_addr}] Login recibido: {login!r}")
 
             # El cliente puede salir antes de loguearse
-            if login.lower() == "adios":
-                self._send_text("adios\n") # Dejo con _send_text y no _send_block, porque acá se cierra la conexión
-                print(f"[+] {self.client_addr}: conexión cerrada por 'adios' durante login.")
+            if login.lower() == "/adios":
+                self._send_text("/adios\n") # Dejo con _send_text y no _send_block, porque acá se cierra la conexión
+                print(f"[+] {self.client_addr}: conexión cerrada por '/adios' durante login.")
                 return False
 
             # Obtener estado actual del usuario
@@ -689,7 +689,7 @@ class ClientSession:
         - Incrementa el contador de clientes activos del servidor.
         - Ejecuta el login con reintentos.
         - Envía el estado inicial.
-        - Entra en el bucle de comandos hasta que el cliente envía 'adios'
+        - Entra en el bucle de comandos hasta que el cliente envía '/adios'
           o corta la conexión.
         - Cierra recursos y decrementa el contador de clientes activos del servidor.
         """
@@ -737,9 +737,9 @@ class ClientSession:
                     self._cmd_followers_local()
                 elif cmd in ("/help", "help"):
                     self._cmd_help()
-                elif cmd == "adios":
-                    self._send_text("adios") # Queda sin marcador (no se usa _send_block), para que el cliente sepa que después de adios viene cierre de conexión, no otra respuesta larga
-                    print(f"[+] {self.client_addr}: conexión finalizada por comando 'adios'.")
+                elif cmd == "/adios":
+                    self._send_text("/adios") # Queda sin marcador (no se usa _send_block), para que el cliente sepa que después de /adios viene cierre de conexión, no otra respuesta larga
+                    print(f"[+] {self.client_addr}: conexión finalizada por comando '/adios'.")
                     break
                 else:
                     msg = (

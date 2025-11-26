@@ -19,3 +19,6 @@ __pycache__/
 # Sistema operativo
 .DS_Store
 Thumbs.db
+
+#versiones anteriores no sincronizadas
+old_versions/
