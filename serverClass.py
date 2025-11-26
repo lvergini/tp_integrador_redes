@@ -66,7 +66,7 @@ Protocolo (texto plano, UTF-8):
    "Comando no reconocido.\nUsá /help para ver la lista de comandos.\n"
    seguido del prompt estándar.
 """
-
+from mysql.connector import MySQLConnection
 import socket
 import threading
 from datetime import datetime
@@ -85,10 +85,97 @@ from src.services import (
 HOST: str = "0.0.0.0"
 PORT: int = 5000
 
-# Contador global de clientes activos (protegido por lock para uso entre hilos)
-active_clients: int = 0
-active_clients_lock = threading.Lock()
 
+class GitHubServer:
+    """
+    Servidor TCP concurrente para sincronizar datos de GitHub y atender clientes.
+
+    Responsabilidades:
+      - Inicializar la base de datos (crear tablas si no existen).
+      - Abrir un socket de escucha en HOST:PORT.
+      - Aceptar conexiones entrantes.
+      - Crear un hilo por cliente, ejecutando ClientSession.run().
+      - Manejar el cierre ordenado ante KeyboardInterrupt (Ctrl+C).
+    """
+
+    def __init__(self, host: str = HOST, port: int = PORT) -> None:
+        self.host = host
+        self.port = port
+        self.active_clients: int = 0
+        self.active_clients_lock = threading.Lock()
+
+    def _init_database(self) -> None:
+        """
+        Inicializar la base de datos una sola vez al inicio del servidor.
+        Crea las tablas requeridas si no existen.
+        """
+        conn = None
+        try:
+            conn = get_conn()
+            init_db(conn)
+            print("Base de datos inicializada correctamente.")
+        except Exception as e:
+            print(f"[FATAL] No se pudo inicializar la base de datos: {e}")
+            raise
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+    def serve_forever(self) -> None:
+        """
+        Iniciar el servidor y atender clientes en forma concurrente.
+
+        Usa un socket TCP, con:
+          - SO_REUSEADDR para permitir reutilizar el puerto,
+          - timeout corto en accept() para que Ctrl+C (KeyboardInterrupt)
+            se procese con rapidez.
+        """
+        # Inicializar la DB antes de empezar a escuchar
+        try:
+            self._init_database()
+        except Exception:
+            # Si falla la inicialización de la DB, no se arranca el servidor
+            return
+
+        # Crear socket de escucha
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_sock:
+            server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            server_sock.bind((self.host, self.port))
+            server_sock.listen()
+            # Timeout corto para que Ctrl+C se procese entre timeouts
+            server_sock.settimeout(1.0)  # 1 segundo
+            print(f"Servidor escuchando en {self.host}:{self.port}...")
+
+            try:
+                while True:
+                    try:
+                        client_sock, client_addr = server_sock.accept()
+                    except socket.timeout:
+                        # No llegó ningún cliente en 1 segundo; se vuelve al while.
+                        # Esto permite que KeyboardInterrupt se procese entre timeouts.
+                        continue
+                    except KeyboardInterrupt:
+                        print("\nServidor interrumpido por el usuario. Cerrando...")
+                        break
+
+                    # Crear y lanzar la sesión en un hilo daemon
+                    session = ClientSession(client_sock, client_addr, self)
+                    thread = threading.Thread(
+                        target=session.run,
+                        daemon=True,
+                    )
+                    thread.start()
+
+            except KeyboardInterrupt:
+                # Por si la interrupción cae fuera del accept()
+                print("\nServidor interrumpido por el usuario. Cerrando...")
+            except Exception as e:
+                print(f"[FATAL] Error en el loop principal del servidor: {e}")
+
+        print("Servidor apagado.")
 
 class ClientSession:
     """
@@ -97,6 +184,7 @@ class ClientSession:
     Encapsula:
       - el socket del cliente,
       - la dirección remota,
+      - una referencia al servidor (GitHubServer) para acceder a estado compartido,
       - la conexión a la base de datos,
       - el login actual,
       - el estado resumido del usuario (status).
@@ -108,10 +196,24 @@ class ClientSession:
       - construir y enviar las respuestas.
     """
 
-    def __init__(self, client_sock: socket.socket, client_addr: tuple[str, int]) -> None:
+    def __init__(
+        self,
+        client_sock: socket.socket,
+        client_addr: tuple[str, int],
+        server: GitHubServer,
+    ) -> None:
+        """
+        Crear una sesión para un cliente.
+
+        Parámetros:
+            client_sock: socket ya aceptado desde el servidor.
+            client_addr: tupla (host, puerto) del cliente.
+            server: instancia de GitHubServer que creó esta sesión.
+        """
         self.client_sock = client_sock
         self.client_addr = client_addr
-        self.db_conn = None
+        self.server = server
+        self.db_conn: MySQLConnection | None = None
         self.login: str | None = None
         self.status: dict | None = None
         self._recv_buffer: str = ""
@@ -297,6 +399,9 @@ class ClientSession:
         """
         Leer una línea terminada en '\n' desde el socket.
 
+        Usa un buffer interno por sesión para acumular datos hasta
+        encontrar un salto de línea.
+
         Devuelve:
             str: línea sin el '\n' final.
             None: si el cliente cerró la conexión antes de completar una línea.
@@ -322,7 +427,6 @@ class ClientSession:
             # Se decodifica una sola vez acá
             self._recv_buffer += chunk.decode("utf-8", errors="replace")
             
-
     def _run_sync_command(
         self,
         *,
@@ -518,15 +622,13 @@ class ClientSession:
         Método principal de la sesión.
 
         - Abre conexión a la base de datos.
-        - Incrementa el contador global de clientes activos.
+        - Incrementa el contador de clientes activos del servidor.
         - Ejecuta el login con reintentos.
         - Envía el estado inicial.
         - Entra en el bucle de comandos hasta que el cliente envía 'adios'
           o corta la conexión.
-        - Cierra recursos y decrementa el contador de clientes activos.
+        - Cierra recursos y decrementa el contador de clientes activos del servidor.
         """
-
-        global active_clients
 
         print(f"[+] Conexión aceptada desde {self.client_addr}")
 
@@ -535,9 +637,9 @@ class ClientSession:
             self.db_conn = get_conn()
 
             # Incrementar contador de clientes activos (thread-safe)
-            with active_clients_lock:
-                active_clients += 1
-                print(f"[INFO] Clientes activos: {active_clients}")
+            with self.server.active_clients_lock:
+                self.server.active_clients += 1
+                print(f"[INFO] Clientes activos: {self.server.active_clients}")
 
             # Fase de login (permite reintentos si el usuario no es válido)
             if not self._login_loop():
@@ -602,99 +704,11 @@ class ClientSession:
             print(f"[-] Conexión cerrada con {self.client_addr}")
 
             # Decrementar contador de clientes activos
-            with active_clients_lock:
-                active_clients -= 1
-                print(f"[INFO] Clientes activos: {active_clients}")
+            with self.server.active_clients_lock:
+                self.server.active_clients -= 1
+                print(f"[INFO] Clientes activos: {self.server.active_clients}")
 
 
-class GitHubServer:
-    """
-    Servidor TCP concurrente para sincronizar datos de GitHub y atender clientes.
-
-    Responsabilidades:
-      - Inicializar la base de datos (crear tablas si no existen).
-      - Abrir un socket de escucha en HOST:PORT.
-      - Aceptar conexiones entrantes.
-      - Crear un hilo por cliente, ejecutando ClientSession.run().
-      - Manejar el cierre ordenado ante KeyboardInterrupt (Ctrl+C).
-    """
-
-    def __init__(self, host: str = HOST, port: int = PORT) -> None:
-        self.host = host
-        self.port = port
-
-    def _init_database(self) -> None:
-        """
-        Inicializar la base de datos una sola vez al inicio del servidor.
-        Crea las tablas requeridas si no existen.
-        """
-        conn = None
-        try:
-            conn = get_conn()
-            init_db(conn)
-            print("Base de datos inicializada correctamente.")
-        except Exception as e:
-            print(f"[FATAL] No se pudo inicializar la base de datos: {e}")
-            raise
-        finally:
-            if conn is not None:
-                try:
-                    conn.close()
-                except Exception:
-                    pass
-
-    def serve_forever(self) -> None:
-        """
-        Iniciar el servidor y atender clientes en forma concurrente.
-
-        Usa un socket TCP, con:
-          - SO_REUSEADDR para permitir reutilizar el puerto,
-          - timeout corto en accept() para que Ctrl+C (KeyboardInterrupt)
-            se procese con rapidez.
-        """
-        # Inicializar la DB antes de empezar a escuchar
-        try:
-            self._init_database()
-        except Exception:
-            # Si falla la inicialización de la DB, no se arranca el servidor
-            return
-
-        # Crear socket de escucha
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_sock:
-            server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            server_sock.bind((self.host, self.port))
-            server_sock.listen()
-            # Timeout corto para que Ctrl+C se procese entre timeouts
-            server_sock.settimeout(1.0)  # 1 segundo
-            print(f"Servidor escuchando en {self.host}:{self.port}...")
-
-            try:
-                while True:
-                    try:
-                        client_sock, client_addr = server_sock.accept()
-                    except socket.timeout:
-                        # No llegó ningún cliente en 1 segundo; se vuelve al while.
-                        # Esto permite que KeyboardInterrupt se procese entre timeouts.
-                        continue
-                    except KeyboardInterrupt:
-                        print("\nServidor interrumpido por el usuario. Cerrando...")
-                        break
-
-                    # Crear y lanzar la sesión en un hilo daemon
-                    session = ClientSession(client_sock, client_addr)
-                    thread = threading.Thread(
-                        target=session.run,
-                        daemon=True,
-                    )
-                    thread.start()
-
-            except KeyboardInterrupt:
-                # Por si la interrupción cae fuera del accept()
-                print("\nServidor interrumpido por el usuario. Cerrando...")
-            except Exception as e:
-                print(f"[FATAL] Error en el loop principal del servidor: {e}")
-
-        print("Servidor apagado.")
 
 
 def main() -> None:
