@@ -267,16 +267,43 @@ class ClientSession:
             # Si algo falla, se devuelve la representación string cruda
             return str(dt)
 
-    def _build_commands_help(self) -> str:
+    def _build_commands_help(
+        self,
+        login: str | None = None,
+        last_sync_repos: str | None = None,
+        last_sync_followers: str | None = None,
+    ) -> str:
         """
         Devolver el texto con la lista de comandos disponibles.
+
+        Si recibe login y fechas de sync, las incluye en el encabezado
+        y aclara la última sync en los comandos *_local.
         """
+
+        header = ""
+        if login is not None:
+            lsr = last_sync_repos or "nunca"
+            lsf = last_sync_followers or "nunca"
+            header = (
+                f"Usuario actual: {login}\n"
+                f"Última sync repos: {lsr} – followers: {lsf}\n\n"
+            )
+
+        repos_local = "  /repos_local     -> ver repos guardados en la base"
+        if last_sync_repos is not None:
+            repos_local += f" (última sync: {last_sync_repos})"
+
+        followers_local = "  /followers_local -> ver followers guardados en la base"
+        if last_sync_followers is not None:
+            followers_local += f" (última sync: {last_sync_followers})"
+
         return (
+            header +
             "Comandos disponibles:\n"
             "  /repos           -> sincronizar repos desde GitHub y ver los guardados\n"
             "  /followers       -> sincronizar followers desde GitHub y ver los guardados\n"
-            "  /repos_local     -> ver repos guardados en la base\n"
-            "  /followers_local -> ver followers guardados en la base\n"
+            f"{repos_local}\n"
+            f"{followers_local}\n"
             "  /help            -> mostrar esta ayuda\n"
             "  adios            -> cerrar la conexión\n"
         )
@@ -319,7 +346,11 @@ class ClientSession:
             f"Followers guardados: {followers_count} (última sync: {lsf})\n"
         )
 
-        commands = "\n" + self._build_commands_help()
+        commands = "\n" + self._build_commands_help(
+                login=login,
+                last_sync_repos=lsr,
+                last_sync_followers=lsf,
+            )
 
         return line_header + resumen + commands
 
@@ -610,7 +641,14 @@ class ClientSession:
         Comando /help (o help):
         Muestra la lista de comandos disponibles.
         """
-        msg = self._build_commands_help() + "\n" + self._build_prompt()
+        lsr = self._fmt_last_sync(self.status.get("last_sync_repos"))
+        lsf = self._fmt_last_sync(self.status.get("last_sync_followers"))
+
+        msg = self._build_commands_help(
+            login=self.login,
+            last_sync_repos=lsr,
+            last_sync_followers=lsf
+        ) + "\n" + self._build_prompt()
         self._send_text(msg)
 
     # -----------------------------------------------------------

@@ -12,7 +12,7 @@ Flujo básico:
    - /followers       -> sincronizar followers desde GitHub y guardar en la base
    - /repos_local     -> ver repos guardados en la base
    - /followers_local -> ver followers guardados en la base
-   - /help            -> ver ayuda de comandos
+   - /help o help     -> ver ayuda de comandos
    - adios            -> cerrar la conexión
 
 5) El cliente muestra la respuesta del servidor para cada comando.
@@ -86,7 +86,7 @@ class GitHubClient:
             bufsize (int): tamaño máximo del buffer de recepción.
 
         Retorna:
-            str | None: texto recibido sin saltos de línea extra,
+            str | None: texto recibido tal como llega (incluyendo saltos de línea),
                         o None si el servidor cerró la conexión.
         """
         data = sock.recv(bufsize)
