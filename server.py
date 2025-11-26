@@ -92,7 +92,7 @@ from src.services import (
 )
 
 # Dirección y puerto de escucha del servidor
-HOST: str = "0.0.0.0"
+HOST: str = "127.0.0.1"
 PORT: int = 5000
 
 END_MARKER: str = "\n<<END_OF_MESSAGE>>\n"
