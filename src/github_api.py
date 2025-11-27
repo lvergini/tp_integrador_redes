@@ -11,9 +11,9 @@ def gh_headers() -> dict[str, str]:
     Incluye versión de API, tipo de contenido y, si existe, el token en Authorization.
     """
     h = {
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "github-cli/1.0",
+        "Accept": "application/vnd.github+json", # tipo de contenido: rta JSON
+        "X-GitHub-Api-Version": "2022-11-28", #fija la versión de la API
+        "User-Agent": "github-cli/1.0", # identifica la app cliente. 
     }
     token = os.getenv("GITHUB_TOKEN")
     if token:
@@ -22,18 +22,41 @@ def gh_headers() -> dict[str, str]:
 
 def _paginate(url: str, params: dict[str, str] | None = None) -> Iterator[dict]:
     """
-    Iterar secuencialmente los ítems de un endpoint paginado de GitHub (paginación por página).
-    Usa `per_page=100` por defecto y avanza hasta que no haya más resultados.
+    Generador que recorre secuencialmente los resultados paginados de un endpoint
+    de la API de GitHub. Solicita una página por vez y devuelve
+    cada elemento individual mediante `yield`.
+
+    - Realiza requests GET secuenciales agregando el número de página.
+    - Valida errores HTTP con `raise_for_status()`.
+    - Decodifica cada página como JSON.
+    - Por cada página, devuelve sus elementos uno por uno con `yield`.
+    - Finaliza cuando:
+        * la página viene vacía, o
+        * la cantidad de elementos es menor a `per_page` (última página).
+
+    Parámetros:
+        url (str):
+            Endpoint completo del recurso (ej.: "https://api.github.com/users/foo/repos").
+        params (dict[str, str] | None):
+            Parámetros opcionales de querystring. Se copian internamente para no
+            modificar el diccionario original. Se fuerza `per_page=100` para
+            minimizar la cantidad de requests.
+    
+    Retorna:
+        Iterator[dict]:
+            Un iterador que emite cada elemento retornado por GitHub, sin cargar
+            todas las páginas en memoria.
+    
     """
-    params = dict(params or {})
+    params = dict(params or {}) #copia de diccionario (para no modificar original) o dicc vacío
     params.setdefault("per_page", 100)
     page = 1
     while True:
         params["page"] = page
         r = requests.get(url, headers=gh_headers(), params=params, timeout=30)
-        r.raise_for_status()
-        data = r.json()
-        if not data:
+        r.raise_for_status() #  lanzar exception si hay errores HTTP.
+        data = r.json() # convertir JSON a lista de elementos
+        if not data: #si la lista está vacía, asume que se llegó al final
             break
         for item in data:
             yield item
@@ -43,7 +66,7 @@ def _paginate(url: str, params: dict[str, str] | None = None) -> Iterator[dict]:
 
 def iso_to_dt(s: str | None) -> datetime | None:
     """
-    Convertir una cadena ISO8601 de GitHub (terminada en 'Z') a datetime naive en UTC.
+    Convertir una cadena ISO8601 de GitHub (terminada en 'Z') a datetime naive (sin zona horaria) en UTC.
     Si no hay valor, devuelve None.
     """
     if not s:

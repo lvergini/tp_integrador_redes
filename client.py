@@ -13,7 +13,7 @@ Flujo básico:
    - /repos_local     -> ver repos guardados en la base
    - /followers_local -> ver followers guardados en la base
    - /help o help     -> ver ayuda de comandos
-   - /adios            -> cerrar la conexión
+   - /adios           -> cerrar la conexión
 
 5) El cliente muestra la respuesta del servidor para cada comando.
    Cada respuesta del servidor viene delimitada por el marcador
@@ -23,7 +23,7 @@ Flujo básico:
 import socket
 
 HOST: str = "127.0.0.1"  # IP del servidor (localhost por defecto)
-PORT: int = 5000         # Puerto del servidor (debe coincidir con server.py)
+PORT: int = 5000         # Puerto del servidor
 
 END_MARKER: str = "\n<<END_OF_MESSAGE>>\n"
 
@@ -97,7 +97,7 @@ class GitHubClient:
             None: si el servidor cerró la conexión sin enviar nada.
         """
         while True:
-            # ¿Ya está el marcador dentro del buffer?
+            # Revisa si el marcador está dentro del buffer
             if marker in self._recv_buffer:
                 texto, _, rest = self._recv_buffer.partition(marker)
                 self._recv_buffer = rest
@@ -143,7 +143,7 @@ class GitHubClient:
                   si el servidor cortó la conexión durante el login.
         """
         while True:
-            login = self._prompt_login()
+            login = self._prompt_login() # pide a usuario por consola el login
 
             # Opción de salir sin llegar a loguearse
             if login.lower() == "/adios":

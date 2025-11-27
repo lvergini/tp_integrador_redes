@@ -133,7 +133,7 @@ class GitHubServer:
                 try:
                     conn.close()
                 except Exception:
-                    pass
+                    pass #ignora excepciones durante el cierre de la db (en un finally, un error al cerrar no cambia el flujo lógico del programa.)
 
     def serve_forever(self) -> None:
         """
@@ -248,11 +248,11 @@ class ClientSession:
         while True:
             # Si ya existe al menos una línea en el buffer
             if "\n" in self._recv_buffer:
-                line, _, rest = self._recv_buffer.partition("\n")
-                self._recv_buffer = rest
-                return line  # ya es str
+                line, _, rest = self._recv_buffer.partition("\n") # devuelve la parte anterior al separador, el separador, y el resto
+                self._recv_buffer = rest # guarda el resto en el buffer para futuras lecturas
+                return line  # devuelve la línea (parte anterior al separador) (ya es str)
 
-            # Si se necesitan leer más datos del socket
+            # Si se necesitan leer más datos del socket (todavía no hay una línea completa)
             chunk = self.client_sock.recv(4096)
             if not chunk:
                 # El cliente cerró la conexión
@@ -261,16 +261,16 @@ class ClientSession:
                     line = self._recv_buffer
                     self._recv_buffer = ""
                     return line
-                return None
+                return None # Devuelve None indicando fin de conexión
 
-            # Se decodifica una sola vez acá
+            # Se decodifica una sola vez acá de bytes a str. "replace": si aparece byte inválido, se sustituye por caracter de reemplazo en lugar de excp.
             self._recv_buffer += chunk.decode("utf-8", errors="replace")
             
     def _send_text(self, text: str) -> None:
         """
         Enviar texto al cliente codificado en UTF-8 usando sendall.
 
-        Garantiza que todo el contenido se envíe o se lance una excepción.
+        Garantiza que todo el contenido se envíe o se lance una excepción (=sendall).
         """
         self.client_sock.sendall(text.encode("utf-8"))
 
@@ -503,9 +503,9 @@ class ClientSession:
             # Actualizar estado del usuario
             self.status = get_user_status(self.db_conn, self.login)
             last_sync_str = self._fmt_last_sync(self.status.get(status_field))
-            rows = show_func(self.db_conn, self.login)
+            rows = show_func(self.db_conn, self.login) #(services) consulta bd para obtener las filas que se van a mostrar
 
-            msg = output_builder(self.login, last_sync_str, rows, synced)
+            msg = output_builder(self.login, last_sync_str, rows, synced) #construye el mensaje completo
         except Exception as e:
             msg = f"Error al sincronizar {kind} para {self.login}: {e}\n"
 
@@ -530,10 +530,9 @@ class ClientSession:
         self._ensure_db_connection()
 
         if self.status is None:
-            # En el flujo actual no debería pasar, pero lo dejamos defensivo
             self.status = get_user_status(self.db_conn, self.login)
 
-        last_sync_str = self._fmt_last_sync(self.status.get(status_field))
+        last_sync_str = self._fmt_last_sync(self.status.get(status_field)) # utiliza el estado ya almacenado para obtener la fecha de última sincronización
         rows = show_func(self.db_conn, self.login)
 
         msg = output_builder(self.login, last_sync_str, rows)
@@ -578,7 +577,7 @@ class ClientSession:
                 print(f"[+] {self.client_addr}: conexión cerrada por '/adios' durante login.")
                 return False
 
-            # Obtener estado actual del usuario
+            # Obtener estado actual del usuario (consulta si existe usuario en db)
             status = get_user_status(self.db_conn, login)
 
             # Si no existe, se intenta crear en la base validando en GitHub
@@ -586,7 +585,7 @@ class ClientSession:
                 try:
                     set_current_user(self.db_conn, login)
                     status = get_user_status(self.db_conn, login)
-                except Exception as e:
+                except Exception as e: # ej: no se encuentra usuario en GitHub o la API devuelve error
                     # NO se cierra la conexión: se da la posibilidad de reintentar
                     error_msg = (
                         "ERROR_LOGIN "
@@ -706,7 +705,7 @@ class ClientSession:
                 print(f"[INFO] Clientes activos: {self.server.active_clients}")
 
             # Fase de login (permite reintentos si el usuario no es válido)
-            if not self._login_loop():
+            if not self._login_loop(): # si devuelve False, termina la sesión
                 return
 
             # Enviar mensaje de estado inicial al cliente
@@ -751,7 +750,7 @@ class ClientSession:
 
         except Exception as e:
             print(f"[!] Error manejando cliente {self.client_addr}: {e}")
-        finally:
+        finally: # cierre de recursos
             # Cerrar conexión a la base
             if self.db_conn is not None:
                 try:

@@ -11,10 +11,10 @@ from src.db import (
 
 def set_current_user(conn, login: str) -> dict:
     """Valida el usuario en GitHub, lo guarda/actualiza en DB y retorna el registro."""
-    u = get_user(login)           # puede lanzar HTTPError si no existe
-    upsert_user(conn, u)
-    mark_user_tracked(conn, u["id"])
-    return get_user_by_login(conn, u["login"])
+    u = get_user(login)           # puede lanzar HTTPError si no existe (consulta a api github: devuelve dict con datos)
+    upsert_user(conn, u)  # inserta o actualiza usuario en tabla user
+    mark_user_tracked(conn, u["id"])  # marca un usuario como gestionado
+    return get_user_by_login(conn, u["login"]) #retorna diccionario con datos del usuario
 
 
 
@@ -29,10 +29,10 @@ def sync_repos(conn, login: str) -> int:
     Retorna:
         int: cantidad de repositorios procesados (upserts).
     """
-    owner_id = get_user_id_by_login(conn, login)
-    repos = fetch_user_repos(login)
-    n = upsert_repos(conn, owner_id, repos)
-    mark_last_sync_repos(conn, owner_id)
+    owner_id = get_user_id_by_login(conn, login) # obtiene id numérico (de GitHUB) de usuario almacenado en la base (db.py)
+    repos = fetch_user_repos(login) # obtiene y normaliza los repos del usuario (gihub_api.py)
+    n = upsert_repos(conn, owner_id, repos) # Insertar o actualizar repos en bd.
+    mark_last_sync_repos(conn, owner_id) #Actualizar la marca de tiempo 'last_sync_repos' del usuario en bd.
     return n
 
 def show_repos(conn, login: str) -> list[tuple[str, str | None, int]]:
@@ -77,9 +77,6 @@ def show_followers(conn, login: str) -> list[tuple[str, str | None]]:
         list[tuple]: pares (login, html_url) de cada follower.
     """
     return select_followers_by_user(conn, login)
-
-
-
 
 def get_user_status(conn, login: str) -> dict:
     """
@@ -132,27 +129,3 @@ def get_user_status(conn, login: str) -> dict:
         "followers_count": followers_count,
     }
 
-
-
-"""
-def refresh_current_user_row(conn, login: str) -> dict | None:
-    
-    Recargar desde la base la fila del usuario actual.
-    Útil tras una sincronización para reflejar las fechas last_sync actualizadas.
-
-    Parámetros:
-        conn: conexión activa a MySQL.
-        login (str): nombre de usuario de GitHub.
-
-    Retorna:
-        dict | None: fila completa actualizada del usuario en DB, o None si no existe.
-    
-    return get_user_by_login(conn, login)
-
-"""
-
-"""
-def list_stored_users(conn) -> list[dict]:
-
-    return select_all_users(conn)
-"""
