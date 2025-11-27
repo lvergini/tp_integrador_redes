@@ -302,7 +302,6 @@ def select_repos_by_owner(conn, login: str) -> list[tuple]:
     finally:
         cur.close()
 
-
 def upsert_user_followers(conn, followed_id: int, followers: list[dict]) -> int:
     """
     Registrar relaciones de seguimiento para un usuario dado: (followed <- follower).

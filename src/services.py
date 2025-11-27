@@ -16,8 +16,6 @@ def set_current_user(conn, login: str) -> dict:
     mark_user_tracked(conn, u["id"])  # marca un usuario como gestionado
     return get_user_by_login(conn, u["login"]) #retorna diccionario con datos del usuario
 
-
-
 def sync_repos(conn, login: str) -> int:
     """
     Traer los repositorios del usuario desde GitHub y guardarlos en la base.

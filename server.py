@@ -153,7 +153,7 @@ class GitHubServer:
 
         # Crear socket de escucha
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_sock:
-            server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1) #permite reutilizar el puerto sin esperar a que quede en TIME:WAIT
             server_sock.bind((self.host, self.port))
             server_sock.listen()
             # Timeout corto para que Ctrl+C se procese entre timeouts
@@ -176,7 +176,7 @@ class GitHubServer:
                     session = ClientSession(client_sock, client_addr, self)
                     thread = threading.Thread(
                         target=session.run,
-                        daemon=True,
+                        daemon=True, # si se cierra el proceso principal, se terminan los hilos
                     )
                     thread.start()
 
@@ -499,7 +499,7 @@ class ClientSession:
         self._ensure_db_connection()
 
         try:
-            synced = sync_func(self.db_conn, self.login)
+            synced = sync_func(self.db_conn, self.login) #sync_followers/repos de services.py
             # Actualizar estado del usuario
             self.status = get_user_status(self.db_conn, self.login)
             last_sync_str = self._fmt_last_sync(self.status.get(status_field))
@@ -533,7 +533,7 @@ class ClientSession:
             self.status = get_user_status(self.db_conn, self.login)
 
         last_sync_str = self._fmt_last_sync(self.status.get(status_field)) # utiliza el estado ya almacenado para obtener la fecha de última sincronización
-        rows = show_func(self.db_conn, self.login)
+        rows = show_func(self.db_conn, self.login) #(services) consulta bd para obtener las filas que se van a mostrar
 
         msg = output_builder(self.login, last_sync_str, rows)
         msg += self._build_prompt()

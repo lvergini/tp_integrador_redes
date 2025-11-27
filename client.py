@@ -225,6 +225,7 @@ class GitHubClient:
 
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.settimeout(30)    # evita bloqueos eternos
                 sock.connect((self.host, self.port))
                 print("Conexión establecida.\n")
 
@@ -235,6 +236,9 @@ class GitHubClient:
 
                 # 2) Bucle de comandos
                 self._command_loop(sock)
+
+        except socket.timeout:
+            print("Timeout: el servidor no respondió en el tiempo esperado.")
 
         except ConnectionRefusedError:
             print(
